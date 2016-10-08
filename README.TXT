@@ -69,7 +69,7 @@ Supported operators (listed by precedence):
           + -
           << >>
           < > <= >=
-          = == != <> 
+          = == != <>
           &
           ^
           |
@@ -79,7 +79,7 @@ Supported operators (listed by precedence):
 '=' and '<>' are equivalent to C's '==' and '!=' operators.  The unary '<'
 and '>' operators give the lower and upper byte of a 16-bit word (respectively).
 All other operators function like their C equivalents.
-        
+
 --------------------------------------------------------------
 Labels
 --------------------------------------------------------------
@@ -114,7 +114,7 @@ especially useful for forward and reverse branches.
           jmp --    ;multiple --'s handy for nested loops
        +  ldx #0
    +here  nop
-        
+
 --------------------------------------------------------------
 Assembler directives (in no particular order)
 --------------------------------------------------------------
@@ -306,6 +306,6 @@ ERROR
                         ERROR "X is out of range :("
                 ENDIF
 
-        
+
 --------------------------------------------------------------
 <EOF>
