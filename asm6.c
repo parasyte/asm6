@@ -64,6 +64,9 @@ typedef struct {
                             //for opcodes (reserved), this holds opcode definitions, see initlabels
     int type;               //labeltypes enum (see above)
     int used;               //for EQU and MACRO recursion check
+    int referenced;         //for unreferenced label warnings
+    char *errsrc;           //for unreferenced label warning messages
+    int errline;            //for unreferenced label warning messages
     int pass;               //when label was last defined
     int scope;              //where visible (0=global, nonzero=local)
     void *link;             //labels that share the same name (local labels) are chained together
@@ -541,6 +544,9 @@ bin:        j=*s;
                 errmsg=UnknownLabel;
             }
         } else {
+            if((*p).type==LABEL)
+                (*p).referenced=1; // This label has been referenced at least once
+
             dependant|=!(*p).line;
             needanotherpass|=!(*p).line;
             if((*p).type==LABEL || (*p).type==VALUE) {
@@ -931,6 +937,9 @@ char *expandline(char *dst,char *src) {
                 }
             }
             if(p) {
+                if((*p).type==LABEL)
+                    (*p).referenced=1; // This label has been referenced at least once
+
                 (*p).used=1;
                 expandline(dst,(*p).line);
                 (*p).used=0;
@@ -977,7 +986,7 @@ void reverse(char *dst,char *src) {
 //local:
 //  false: if label starts with LOCALCHAR, make it local, otherwise it's global
 //  true: force label to be local (used for macros)
-void addlabel(char *word, int local) {
+void addlabel(char *word, int local, char *errsrc, int errline) {
     char c=*word;
     label *p=findlabel(word);
     if(p && local && !(*p).scope && (*p).type!=VALUE) //if it's global and we're local
@@ -995,6 +1004,9 @@ void addlabel(char *word, int local) {
         (*labelhere).value=addr;
         (*labelhere).line=ptr_from_bool(addr>=0);
         (*labelhere).used=0;
+        (*labelhere).referenced=0;
+        (*labelhere).errsrc=(errsrc ? strdup(errsrc) : NULL);
+        (*labelhere).errline=errline;
         if(c==LOCALCHAR || local) { //local
             (*labelhere).scope=scope;
         } else {        //global
@@ -1142,6 +1154,7 @@ label *newlabel(void) {
     (*p).link=0;
     (*p).scope=0;
     (*p).name=0;
+    (*p).errsrc=0;
 
     if(!findcmp) {//new label with same name
         (*p).name=(*labellist[findindex]).name;//share old name
@@ -1174,11 +1187,25 @@ label *newlabel(void) {
     return p;
 }
 
+//print warning messages for any unreferenced labels
+void labelwarnings(void) {
+    int i;
+    label *p;
+
+    for(i=labelstart;i<labelend;i++) {
+        p=labellist[i];
+
+        if((*p).type==LABEL && (*p).referenced==0) {
+            fprintf(stderr,"[WARNING] %s(%i): Unreferenced label `%s`\n",(*p).errsrc,(*p).errline,(*p).name);
+        }
+    }
+}
+
 //==============================================================================================================
 
 void showerror(char *errsrc,int errline) {
     error=1;
-    fprintf(stderr,"%s(%i): %s\n",errsrc,errline,errmsg);
+    fprintf(stderr,"[ERROR] %s(%i): %s\n",errsrc,errline,errmsg);
 
     if(!listerr)//only list the first error for this line
         listerr=errmsg;
@@ -1308,7 +1335,7 @@ void processline(char *src,char *errsrc,int errline) {
                 break;
         }
         if(!p) {//maybe a label?
-            if(getlabel(word,&s2)) addlabel(word,insidemacro);
+            if(getlabel(word,&s2)) addlabel(word,insidemacro,errsrc,errline);
             if(errmsg) goto badlabel;//fucked up label
             p=getreserved(&s);
         }
@@ -1453,6 +1480,10 @@ int main(int argc,char **argv) {
             fputs(errmsg, stderr);//bad inputfile??
         }
     } while(!error && !lastchance && needanotherpass);//while no hard errors, not final try, and labels are still unresolved
+
+    if(verbose) {
+        labelwarnings();
+    }
 
     if(outputfile) {
         // Be sure last of output file is written properly
@@ -2004,7 +2035,7 @@ void macro(label *id, char **next) {
 
     labelhere=0;
     if(getlabel(word,next))
-        addlabel(word,0);
+        addlabel(word,0,NULL,0);
     else
         errmsg=NeedName;
 
@@ -2086,7 +2117,7 @@ void expandmacro(label *id,char **next,int errline,char *errsrc) {
         //  addlabel(argname,1);
         //  equ(0,&s);
             if(arg<args) {              //make named arg
-                addlabel((char*)&line[1],1);
+                addlabel((char*)&line[1],1,NULL,0);
                 equ(0,&s);
                 line=(char**)*line; //next arg name
             }
