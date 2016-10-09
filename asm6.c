@@ -92,7 +92,7 @@ label *newlabel();
 void getword(char*,char**,int);
 int getvalue(char**);
 int getoperator(char**);
-int eval(char**,int);
+int eval(char**,int,int);
 label *getreserved(char**);
 int getlabel(char*,char**);
 void processline(char*,char*,int);
@@ -314,6 +314,7 @@ char NoENDR[]="Missing ENDR.";
 char NoENDE[]="Missing ENDE.";
 char IfNestLimit[]="Too many nested IFs.";
 char undefinedPC[]="PC is undefined (use ORG first)";
+char InvalidImm[]="Invalid immediate value.";
 
 char whitesp[]=" \t\r\n:";  //treat ":" like whitespace (for labels)
 char whitesp2[]=" \t\r\n\"";    //(used for filename processing)
@@ -632,7 +633,7 @@ int getoperator(char **str) {
 }
 
 //evaluate expression in str and advance str
-int eval(char **str,int precedence) {
+int eval(char **str,int precedence,int type) {
     char unary;
     char *s,*s2;
     int ret,val2;
@@ -643,7 +644,7 @@ int eval(char **str,int precedence) {
     switch(unary) {
         case '(':
             s++;
-            ret=eval(&s,WHOLEEXP);
+            ret=eval(&s,WHOLEEXP,type);
             s+=strspn(s,whitesp);       //eatwhitespace
             if(*s==')')
                 s++;
@@ -652,23 +653,28 @@ int eval(char **str,int precedence) {
             break;
         case '#':
             s++;
-            ret=eval(&s,WHOLEEXP);
+            if(type==IMM) {
+                ret=eval(&s,WHOLEEXP,type);
+            }
+            else {
+                errmsg=InvalidImm;
+            }
             break;
         case '~':
             s++;
-            ret=~eval(&s,UNARY);
+            ret=~eval(&s,UNARY,type);
             break;
         case '!':
             s++;
-            ret=!eval(&s,UNARY);
+            ret=!eval(&s,UNARY,type);
             break;
         case '<':
             s++;
-            ret=eval(&s,UNARY)&0xff;
+            ret=eval(&s,UNARY,type)&0xff;
             break;
         case '>':
             s++;
-            ret=(eval(&s,UNARY)>>8)&0xff;
+            ret=(eval(&s,UNARY,type)>>8)&0xff;
             break;
         case '+':
         case '-':
@@ -690,7 +696,7 @@ int eval(char **str,int precedence) {
                 needanotherpass=val2;
             }
             if(s2) {//if it wasn't a +-label
-                ret=eval(&s,UNARY);
+                ret=eval(&s,UNARY,type);
                 if(unary=='-') ret=-ret;
             }
             break;
@@ -701,7 +707,7 @@ int eval(char **str,int precedence) {
         *str=s;
         op=getoperator(&s);
         if(precedence<prec[op]) {
-            val2=eval(&s,prec[op]);
+            val2=eval(&s,prec[op],type);
             if(!dependant) switch(op) {
                 case AND:
                     ret&=val2;
@@ -1642,7 +1648,7 @@ void equal(label *id,char **next) {
     else {
         (*labelhere).type=VALUE;
         dependant=0;
-        (*labelhere).value=eval(next,WHOLEEXP);
+        (*labelhere).value=eval(next,WHOLEEXP,IMM);
         (*labelhere).line=ptr_from_bool(!dependant);
     }
 }
@@ -1650,7 +1656,7 @@ void equal(label *id,char **next) {
 void base(label *id, char **next) {
     int val;
     dependant=0;
-    val=eval(next,WHOLEEXP);
+    val=eval(next,WHOLEEXP,ABS);
     if(!dependant && !errmsg)
         addr=val;
     else
@@ -1696,14 +1702,14 @@ void incbin(label *id,char **next) {
     //file seek:
         seekpos=0;
         if(eatchar(next,','))
-            seekpos=eval(next,WHOLEEXP);
+            seekpos=eval(next,WHOLEEXP,ABS);
         if(!errmsg && !dependant) if(seekpos<0 || seekpos>filesize)
             errmsg=SeekOutOfRange;
         if(errmsg) break;
         fseek(f,seekpos,SEEK_SET);
     //get size:
         if(eatchar(next,',')) {
-            bytesleft=eval(next,WHOLEEXP);
+            bytesleft=eval(next,WHOLEEXP,ABS);
             if(!errmsg && !dependant) if(bytesleft<0 || bytesleft>(filesize-seekpos))
                 errmsg=BadIncbinSize;
             if(errmsg) break;
@@ -1752,7 +1758,7 @@ void hex(label *id,char **next) {
 void dw(label *id, char **next) {
     int val;
     do {
-        val=eval(next,WHOLEEXP);
+        val=eval(next,WHOLEEXP,ABS);
         if(!errmsg) {
             if(val>65535 || val<-65536)
                 errmsg=OutOfRange;
@@ -1765,7 +1771,7 @@ void dw(label *id, char **next) {
 void dl(label *id, char **next) {
     byte val;
     do {
-        val=eval(next,WHOLEEXP) & 0xff;
+        val=eval(next,WHOLEEXP,ABS) & 0xff;
         if(!errmsg)
             output(&val,1);
     } while(!errmsg && eatchar(next,','));
@@ -1774,7 +1780,7 @@ void dl(label *id, char **next) {
 void dh(label *id, char **next) {
     byte val;
     do {
-        val=eval(next,WHOLEEXP)>>8;
+        val=eval(next,WHOLEEXP,ABS)>>8;
         if(!errmsg)
             output(&val,1);
     } while(!errmsg && eatchar(next,','));
@@ -1800,7 +1806,7 @@ void db(label *id,char **next) {
             s--;    //point to the "
             *s='0';
             *next=(char*)s;
-            val2=eval(next,WHOLEEXP);
+            val2=eval(next,WHOLEEXP,ABS);
             if(errmsg) continue;
             while(start!=s) {
                 if(*start=='\\')
@@ -1810,7 +1816,7 @@ void db(label *id,char **next) {
                 output_le(val,1);
             }
         } else {
-            val=eval(next,WHOLEEXP);
+            val=eval(next,WHOLEEXP,ABS);
             if(!errmsg) {
                 if(val>255 || val<-128)
                     errmsg=OutOfRange;
@@ -1824,11 +1830,11 @@ void db(label *id,char **next) {
 void dsw(label *id,char **next) {
     int count,val=defaultfiller;
     dependant=0;
-    count=eval(next,WHOLEEXP);
+    count=eval(next,WHOLEEXP,ABS);
     if(dependant || (count<0 && needanotherpass))//unknown count! don't do anything
         count=0;
     if(eatchar(next,','))
-        val=eval(next,WHOLEEXP);
+        val=eval(next,WHOLEEXP,ABS);
     if(!errmsg && !dependant) if(val>65535 || val<-32768 || count<0)
         errmsg=OutOfRange;
     if(errmsg) return;
@@ -1841,7 +1847,7 @@ void filler(int count,char **next) {
     if(dependant || (count<0 && needanotherpass)) //unknown count! don't do anything
         count=0;
     if(eatchar(next,','))
-        val=eval(next,WHOLEEXP);
+        val=eval(next,WHOLEEXP,ABS);
     if(!errmsg && !dependant) if(val>255 || val<-128 || count<0 || count>0x100000)
         errmsg=OutOfRange;
     if(errmsg) return;
@@ -1852,14 +1858,14 @@ void filler(int count,char **next) {
 void dsb(label *id,char **next) {
     int count;
     dependant=0;
-    count=eval(next,WHOLEEXP);
+    count=eval(next,WHOLEEXP,ABS);
     filler(count,next);
 }
 
 void align(label *id,char **next) {
     int count;
     dependant=0;
-    count=eval(next,WHOLEEXP);
+    count=eval(next,WHOLEEXP,ABS);
     if(count>=0) {
         if((unsigned int)addr%count) count-=(unsigned int)addr%count;
         else count=0;
@@ -1873,7 +1879,7 @@ void pad(label *id, char **next) {
         errmsg=undefinedPC;
     } else {
         dependant=0;
-        count=eval(next,WHOLEEXP)-addr;
+        count=eval(next,WHOLEEXP,ABS)-addr;
         filler(count,next);
     }
 }
@@ -1899,7 +1905,7 @@ void opcode(label *id, char **next) {
         s=tmpstr;
         if(type!=IMP && type!=ACC) {//get operand
             if(!eatchar(&s,ophead[type])) continue;
-            val=eval(&s,WHOLEEXP);
+            val=eval(&s,WHOLEEXP,type);
             if(type==REL) {
                 if(!dependant) {
                     val-=addr+2;
@@ -1957,7 +1963,7 @@ void _if(label *id,char **next) {
     else
         iflevel++;
     dependant=0;
-    val=eval(next,WHOLEEXP);
+    val=eval(next,WHOLEEXP,ABS);
     if(dependant || errmsg) {//don't process yet
         ifdone[iflevel]=1;
         skipline[iflevel]=1;
@@ -1993,7 +1999,7 @@ void elseif(label *id,char **next) {
     int val;
     if(iflevel) {
         dependant=0;
-        val=eval(next,WHOLEEXP);
+        val=eval(next,WHOLEEXP,ABS);
         if(!ifdone[iflevel]) {//no previous true statements
             if(dependant || errmsg) {//don't process yet
                 ifdone[iflevel]=1;
@@ -2149,7 +2155,7 @@ int rept_loops;
 char *repttext;//rept chain begins here
 void rept(label *id, char **next) {
     dependant=0;
-    rept_loops=eval(next,WHOLEEXP);
+    rept_loops=eval(next,WHOLEEXP,ABS);
     if(dependant || errmsg || rept_loops<0)
         rept_loops=0;
     makerept=&repttext;
@@ -2191,7 +2197,7 @@ int enum_saveaddr;
 void _enum(label *id, char **next) {
     int val=0;
     dependant=0;
-    val=eval(next,WHOLEEXP);
+    val=eval(next,WHOLEEXP,ABS);
 //  if(!dependant && !errmsg) {
 //  }
     if(!nooutput)
@@ -2211,7 +2217,7 @@ void ende(label *id, char **next) {
 
 void fillval(label *id,char **next) {
     dependant=0;
-    defaultfiller=eval(next,WHOLEEXP);
+    defaultfiller=eval(next,WHOLEEXP,ABS);
 }
 
 void make_error(label *id,char **next) {
